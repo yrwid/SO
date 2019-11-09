@@ -19,7 +19,7 @@
 */
 
 #define  TASK_STK_SIZE                 512       /* Size of each task's stacks (# of WORDs)            */
-//#define  N_TASKS                        10       /* Number of identical tasks                          */
+#define  N_TASKS                        10       /* Number of identical tasks                          */
 #define  BUFFOR_ROZMIAR					30		 /*ROZMIAR BUFORA DLA ZNAK�W*/
 #define  queSize				        100		 /*ROZMIAR KOLEJKI*/
 //#define  LINIE_ILOSC					4		 /*	ILOSC LINII WYSWIETLANYCH*/
@@ -263,7 +263,8 @@ void TaskKlawiatura(void *pdata)
 	
 	for(;;)
 	{
-		if(PC_GetKey(&Klaw) == TRUE)			
+		if(PC_GetKey(&Klaw) == TRUE)
+        {			
 			OSMboxPost(Box, &Klaw);
 		}
 		OSTimeDly(1);										//opoznienie 1 cykl zegara 
@@ -285,13 +286,13 @@ void TaskEdycja(void *pdata)
         displayBuffor->buffor[BufforPozycja] = 0x20;
 		//buffor[linia].buffor[BufforPozycja] = 0x20;
 	}
-	displayBuffor.X = 0;
-	displayBuffor.Y = 0;
+	displayBuffor->X = 0;
+	displayBuffor->Y = 0;
 	BufforPozycja = 0;
 	
 	for(;;)
 	{   
-		 Klaw = (INT16S *)OSMboxPend(CommMbox,0,&err);
+		 Klaw = (INT16S *)OSMboxPend(Box,0,&err);
 		 down = (char)*Klaw;
 
 	//	 PC_DispChar(5, 24, up , DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
@@ -338,9 +339,9 @@ void TaskEdycja(void *pdata)
 void TaskWyswietlanie(void *pdata)
 {
 	struct MboxBuff *buffor2 = 0;
-	INT8U err;
-	INT16S key;
-	pdata = pdata;.
+	//INT8U err;
+	//INT16S key;
+	pdata = pdata;
 							
 	for(;;)
 	{
