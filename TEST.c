@@ -19,7 +19,7 @@
 */
 
 #define  TASK_STK_SIZE                 512       /* Size of each task's stacks (# of WORDs)            */
-#define  N_TASKS                        10       /* Number of identical tasks                          */
+#define  N_TASKS                        18       /* Number of identical tasks                          */
 #define  BUFFOR_ROZMIAR					30		 /*ROZMIAR BUFORA DLA ZNAK�W*/
 #define  queSize				        100		 /*ROZMIAR KOLEJKI*/
 //#define  LINIE_ILOSC					4		 /*	ILOSC LINII WYSWIETLANYCH*/
@@ -42,6 +42,7 @@ OS_EVENT      *edMbox;
 
 INT32U semVal = 0;
 char taskNumbers[15] = {0};
+INT8U mboxCount = 0;
 
 void          *editMsg[100];
 void          *CommMsg[100];
@@ -62,6 +63,8 @@ struct queBuff
 */
 
         void  SemTask(void *data);                       /* Function prototypes of tasks                  */
+        void  QueTask(void *data); 
+        void  BoxTask(void *data); 
         void  TaskStart(void *data);                  /* Function prototypes of Startup task           */
 static  void  TaskStartCreateTasks(void);
 static  void  TaskStartDispInit(void);
@@ -243,7 +246,9 @@ static  void  TaskStartCreateTasks (void)
 
     for(i=3; i<8; i++)
     {
-        OSTaskCreate(SemTask, &taskNumbers[i-3], &TaskStk[i][TASK_STK_SIZE - 1], i+1); //Display on screen 
+        OSTaskCreate(QueTask, &taskNumbers[i-3], &TaskStk[i][TASK_STK_SIZE - 1], i+1); 
+        OSTaskCreate(BoxTask, &taskNumbers[i-3], &TaskStk[i+5][TASK_STK_SIZE - 1], i+6);
+        OSTaskCreate(SemTask, &taskNumbers[i-3], &TaskStk[i+10][TASK_STK_SIZE - 1], i+11);
     }
 }
 
@@ -252,6 +257,80 @@ static  void  TaskStartCreateTasks (void)
 *                                                  TASKS
 *********************************************************************************************************
 */
+void  QueTask (void *pdata)
+{
+    INT8U doSomething = 0;
+    INT32U *queMessPtr = 0;
+    INT32U i = 0;
+    INT8U  err;
+    struct queBuff dis[1];
+    dis->tasknr = *(char*)pdata+5 ; 
+    
+    dis->counter = 0; 
+    dis->load = 0;
+    dis->who = 2;
+
+
+    for (;;) {
+        dis->counter++;
+        PC_DispStr(72,dis->tasknr+1,"WORK",DISP_FGND_BLACK + DISP_BGND_RED);
+        OS_ENTER_CRITICAL();
+        queMessPtr =  (INT32U *)OSQAccept(Que);
+        if(queMessPtr)
+        {                                            
+            dis->load = *queMessPtr;                                                                                   
+        }
+        OS_EXIT_CRITICAL();
+        for(i = 0; i < dis->load; i++)
+        { 
+            doSomething = 1;
+        }
+
+        OSMboxPost(edMbox,dis);
+        PC_DispStr(72,dis->tasknr+1,"DONE",DISP_FGND_BLACK + DISP_BGND_GREEN);
+        OSTimeDly(1);                                                    
+    }
+} 
+
+
+
+void  BoxTask (void *pdata)
+{
+    INT8U doSomething = 0;
+    INT32U *boxMessPtr = 0;
+    INT32U i = 0;
+    INT8U  err;
+    struct queBuff dis[1];
+    dis->tasknr = *(char*)pdata+10 ; 
+    
+    dis->counter = 0; 
+    dis->load = 0;
+    dis->who = 2;
+
+
+    for (;;) {
+        dis->counter++;
+        PC_DispStr(72,dis->tasknr+1,"WORK",DISP_FGND_BLACK + DISP_BGND_RED);
+        OS_ENTER_CRITICAL();
+        boxMessPtr =  (INT32U *)OSMboxAccept(Box);
+       
+        if(boxMessPtr)
+        {                                            
+            dis->load = *boxMessPtr; 
+            mboxCount--;   
+            OSMboxPost(Box,boxMessPtr);                                                                               
+        }
+        OS_EXIT_CRITICAL();
+        for(i = 0; i < dis->load; i++)
+        { 
+            doSomething = 1;
+        }
+
+        OSMboxPost(edMbox,dis);
+        PC_DispStr(72,dis->tasknr+1,"DONE",DISP_FGND_BLACK + DISP_BGND_GREEN);
+        OSTimeDly(1);                                                    
+    }
+} 
 
 void  SemTask (void *pdata)
 {
@@ -259,7 +338,6 @@ void  SemTask (void *pdata)
     INT32U i = 0;
     INT8U  err;
     struct queBuff dis[1];
-  //  char buffTsknr[3] ={0};
     dis->tasknr = *(char*)pdata + 15; 
     
     dis->counter = 0; 
@@ -270,17 +348,21 @@ void  SemTask (void *pdata)
     for (;;) {
         
         dis->counter++;
-        OSSemPend(Sem, 0,&err);                                            
-        dis->load = semVal;                                
-        OSSemPost(Sem);                                                   
-
-            for(i = 0; i < dis->load; i++)
-            { 
-                doSomething = 1;
-            }
+        PC_DispStr(72,dis->tasknr+1,"WORK",DISP_FGND_BLACK + DISP_BGND_RED);
+        if(OSSemAccept(Sem))
+        {                                            
+            dis->load = semVal;                                
+            OSSemPost(Sem);                                                   
+        }
+            
+        for(i = 0; i < dis->load; i++)
+        { 
+            doSomething = 1;
+        }
 
         OSMboxPost(edMbox,dis);
-        OSTimeDly(1);                                                       
+        PC_DispStr(72,dis->tasknr+1,"DONE",DISP_FGND_BLACK + DISP_BGND_GREEN);
+        OSTimeDly(1);                                                    
     }
 } 
 
@@ -303,8 +385,10 @@ void TaskEdycja(void *pdata)
 {
 	struct queBuff displayBuffor[1];
 	int BufforPozycja = 0;
+    INT32U  ValBuff = 0;
 	INT16S *Klaw = 0;
 	char up,down;
+    INT8U i;
     INT8U err;
 	pdata = pdata;
 	
@@ -326,9 +410,18 @@ void TaskEdycja(void *pdata)
 		switch(down)
 		{
 			case 0x0D:			//enter  
+                ValBuff = strtoul( displayBuffor->buffor,NULL,10);
+                // insert into global variable
                 OSSemPend(Sem,0,&err);
-                semVal =  strtoul( displayBuffor->buffor,NULL,10);
+                semVal = ValBuff;
                 OSSemPost(Sem);
+                //  insert into Que
+                for (i = 0; i<5; i++)	
+			    {
+				    OSQPost(Que,&ValBuff);
+			    }
+                mboxCount = 5;
+                OSMboxPost(Box, &ValBuff);
 			break;
 			
 			case 0x1B:			//esc
