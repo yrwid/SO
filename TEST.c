@@ -59,7 +59,8 @@ struct queBuff							              /* Struct using by all tasks to communicate w
     char tasknr;                                      /* Taks Number 1-15                              */
 	INT32U load;                                      /* Actual load dor loop                          */
 	INT32U counter;                                   /* Task actual number of enters                  */
-    char buffor[BUF_SIZE];                            /* Matrix used by editTask to save cmd buffor    */      
+    char buffor[4][BUF_SIZE];                            /* Matrix used by editTask to save cmd buffor    */      
+    int line;
     
 };
 
@@ -554,12 +555,17 @@ void editTask(void *pdata)
 	pdata = pdata;                                          // Prevent warnings
 	
     displayBuffor->who = 1;                                 // Who send data? editTask in this case 
+    displayBuffor->line = 0;
 
-	// Clear up first line if any key was pressed 
-	for(BufforPozycja = 0; BufforPozycja<BUF_SIZE; BufforPozycja++)
-	{
-        displayBuffor->buffor[BufforPozycja] = 0;
-	}
+	// Clear up display buffor
+    for(i = 0; i<4; i++)
+    {
+        for(BufforPozycja = 0; BufforPozycja<BUF_SIZE; BufforPozycja++)
+	    {
+            displayBuffor->buffor[i][BufforPozycja] = 0;
+	    }
+    }
+	
 
 	BufforPozycja = 0;
 	
@@ -567,11 +573,13 @@ void editTask(void *pdata)
 	{ 
 		Klaw = (INT16S *)OSQPend(displayQue,0,&err);
 		down = (char)*Klaw;
+   //PC_DispChar(10,0,displayBuffor->line+48,DISP_FGND_BLACK+DISP_BGND_LIGHT_GRAY);
+      //  PC_DispChar(15,0,BufforPozycja+48,DISP_FGND_BLACK+DISP_BGND_LIGHT_GRAY);
 
 		switch(down)
 		{
 			case 0x0D:			//enter  
-                ValBuff = strtoul( displayBuffor->buffor,NULL,10);
+                ValBuff = strtoul( displayBuffor->buffor[displayBuffor->line],NULL,10);
                 // insert into global variable
                 OSSemPend(Sem,0,&err);
                 semVal = ValBuff;
@@ -588,6 +596,17 @@ void editTask(void *pdata)
                 //insert into mailBox
                 mboxCount = 5;
                 OSMboxPost(Box, &ValBuff);
+                displayBuffor->line++;
+                if(displayBuffor->line == 4) 
+                {
+                    displayBuffor->line =0;
+                }
+                //clear up next line
+                for(BufforPozycja = 0; BufforPozycja<BUF_SIZE; BufforPozycja++)
+	            {
+                    displayBuffor->buffor[displayBuffor->line][BufforPozycja] = 0;
+	            }
+                BufforPozycja = 0;
 			break;
 			
 			case 0x1B:			//esc
@@ -597,7 +616,7 @@ void editTask(void *pdata)
 			case 0x08:			//backspace
 				if(BufforPozycja>0)
 				{  
-					displayBuffor->buffor[BufforPozycja-1] = 0;
+					displayBuffor->buffor[displayBuffor->line][BufforPozycja-1] = 0;
 					BufforPozycja--;
 				}
 			break;
@@ -607,7 +626,7 @@ void editTask(void *pdata)
                 // Clear up buffor until all buffor will be clear
 				while(BufforPozycja<BUF_SIZE)            
 				{
-					displayBuffor->buffor[BufforPozycja] = 0;
+					displayBuffor->buffor[displayBuffor->line][BufforPozycja] = 0;
 					BufforPozycja++;
 				}
 				BufforPozycja = 0;
@@ -616,7 +635,7 @@ void editTask(void *pdata)
 			default: // assign key to buffor (Add prevent letters feature)
 				if(BufforPozycja<BUF_SIZE)
 			    {
-					displayBuffor->buffor[BufforPozycja] = down;
+					displayBuffor->buffor[displayBuffor->line][BufforPozycja] = down;
 					BufforPozycja++;
 				}
 			break;
@@ -645,8 +664,11 @@ void displayTask(void *pdata)
 		procesStruct = (struct queBuff*)OSMboxPend(edMbox, 0,&err);                         // Collect data from Mail Box
         if(procesStruct->who == 1)                                                          // editTask sended a message
         {
-            PC_DispClrRow(0, DISP_BGND_LIGHT_GRAY);
-	        PC_DispStr(0,0,procesStruct->buffor, DISP_FGND_BLACK+DISP_BGND_LIGHT_GRAY);     // display actual load value 	
+            PC_DispStr(0,procesStruct->line,clear, DISP_FGND_BLACK+DISP_BGND_LIGHT_GRAY);
+	        PC_DispStr(0,procesStruct->line,procesStruct->buffor[procesStruct->line], DISP_FGND_BLACK+DISP_BGND_LIGHT_GRAY);  
+           // PC_DispStr(0,procesStruct->line,procesStruct->buffor[1], DISP_FGND_BLACK+DISP_BGND_LIGHT_GRAY);  
+           // PC_DispStr(0,procesStruct->line,procesStruct->buffor[2], DISP_FGND_BLACK+DISP_BGND_LIGHT_GRAY);  
+           // PC_DispStr(0,procesStruct->line,procesStruct->buffor[3], DISP_FGND_BLACK+DISP_BGND_LIGHT_GRAY);     // display actual load value 	
         }
         else if(procesStruct->who == 2)                                                     // Que,Sem or Box task sended a message
         {
