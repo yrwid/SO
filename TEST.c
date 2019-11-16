@@ -184,7 +184,7 @@ static  void  TaskStartDispInit (void)
     PC_DispStr( 0,  2, "                            Karol Marciniak                                     ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
     PC_DispStr( 0,  3, "                                                                                ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
     PC_DispStr( 0,  4, "                                                                                ", DISP_FGND_BLACK + DISP_BGND_BLUE);
-    PC_DispStr( 0,  5, "                                 WDT Alarm                                      ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
+    PC_DispStr( 0,  5, "                                                                                ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
     PC_DispStr( 0,  6, "NR  Type Load               Delta/Sek    Counter           ERR          State   ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);    
     PC_DispStr( 0,  7, "01     Q                                                                        ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
     PC_DispStr( 0,  8, "02     Q                                                                        ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
@@ -294,6 +294,7 @@ void propagationTask(void *pdata)
     INT8U queErr = OS_NO_ERR;
     INT8U i=0;
     INT32U loadVal = 0;
+    INT32U previouslyLoadVal = 0;
 
     // initialize data
     dis->who = 3;
@@ -307,7 +308,10 @@ void propagationTask(void *pdata)
     for(;;)
     {
         loadVal = *(INT32U*)OSMboxPend(PropagationMbox,0,&err);
-
+        if(loadVal == previouslyLoadVal)
+        {
+            continue;
+        }
         OSSemPend(Sem,0,&err);
         semVal = loadVal;
         OSSemPost(Sem);
@@ -342,9 +346,40 @@ void propagationTask(void *pdata)
         if(dis->Error == 1)
         {
             OSMboxPost(displayMbox,dis);
+            if(dis->queError == 1)
+            {
+                //enter into reapair sequence
+                dis->who = 4; 
+                OSTimeDly(600);                          /* Wait one second                          */
+                loadVal = 10;
+                //clear Que
+                while(OSQAccept(Que));
+                OSMboxAccept(Box);
+                //send message with who=4 repair sequence
+                OSMboxPost(displayMbox,dis);
+                OSSemPend(Sem,0,&err);
+                semVal = loadVal;
+                OSSemPost(Sem);
+
+                //  insert into Que
+                for (i = 0; i<5; i++)	
+		        {
+		            queErr = OSQPost(Que,&loadVal);
+		        }
+
+                //insert into mailBox
+                for(i=0; i<5; i++)
+                {
+                    mboxErr[i] = OSMboxPost(Box[i], &loadVal);
+                }
+                //out from repair sequence
+                dis->who = 3;
+                dis->queError = 0;
+            }
             dis->Error = 0;
         }
-        
+      
+        previouslyLoadVal = loadVal;
     }
 
 }
@@ -759,7 +794,7 @@ void displayTask(void *pdata)
             {
                 if(procesStruct->mboxError[i] == 1)
                 {
-                    PC_DispStr(49,i+12,(char*)"MBOX FULL ERR", DISP_FGND_BLACK+DISP_BGND_LIGHT_GRAY);
+                    PC_DispStr(55,i+12,(char*)"MBOX FULL ERR", DISP_FGND_BLACK+DISP_BGND_LIGHT_GRAY);
                 }        
             }
 
@@ -767,10 +802,18 @@ void displayTask(void *pdata)
             {
                 for(i =0; i<5; i++ )
                 {
-                    PC_DispStr(49,i+7,(char*)"QUE FULL ERR", DISP_FGND_BLACK+DISP_BGND_LIGHT_GRAY);
+                    PC_DispStr(55,i+7,(char*)"QUE FULL ERR", DISP_FGND_BLACK+DISP_BGND_LIGHT_GRAY);
                 }
             }
             
+        }
+        else if(procesStruct->who == 4)
+        {
+            PC_DispStr(35,5,(char*)"LOST VALUE !!", DISP_FGND_BLACK+DISP_BGND_LIGHT_GRAY);
+            for(i =0; i<10; i++ )
+            {
+                 PC_DispStr(55,i+7,(char*)"              ", DISP_FGND_BLACK+DISP_BGND_LIGHT_GRAY);
+            }
         }
         else
         {
