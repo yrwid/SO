@@ -24,7 +24,7 @@
 #define  TASK_STK_SIZE                  512           /* Size of each task's stacks (# of WORDs)       */
 #define  N_TASKS                        18            /* Number of identical tasks                     */
 #define  BUF_SIZE					    30		      /* Buffor size for command line                  */
-#define  queSize				        100		      /* Size od queue                                 */
+#define  queSize				        10		      /* Size od queue                                 */
 
 /*
 *********************************************************************************************************
@@ -34,34 +34,40 @@
 
 OS_STK        TaskStk[N_TASKS][TASK_STK_SIZE];        /* Tasks stacks                                  */
 OS_STK        TaskStartStk[TASK_STK_SIZE];            /* Start task stack                              */
-OS_STK        WDTTaskStk[TASK_STK_SIZE];              /* WDT task stack                                */
+OS_STK        propagationTaskStk[TASK_STK_SIZE];              /* WDT task stack                                */
 
 
-OS_EVENT      *displayQue;                            /* Pointer to display Queue                      */
+OS_EVENT      *editQue;                            /* Pointer to display Queue                      */
 OS_EVENT      *Sem;                                   /* Pointer to Semaphore using by SemTasks        */
 OS_EVENT      *Que;                                   /* Pointer to Queue using  by QueTasks           */
-OS_EVENT      *Box;                                   /* Pointer to Mbox using by BoxTasks             */
-OS_EVENT      *edMbox;                                /* Pointer to Mbox using by keyboard/edit tasks  */
-OS_EVENT      *WDTsem;                                /* Pointer ro Semaphore using by WDT/Sem/Que/Box */
+OS_EVENT      *Box[5];                                   /* Pointer to Mbox using by BoxTasks             */
+OS_EVENT      *displayMbox;                                /* Pointer to Mbox using by keyboard/edit tasks  */
+OS_EVENT      *PropagationMbox;                                /* Pointer to Propagation Mbox */
 
 
 INT32U semVal = 10;                                   /* Variablec protected by Sem semaphore          */
 char taskNumbers[5] = {0};                            /* Variables thats are pass to tasks on create   */
-INT32U WDTcheck[2][15] = {0};                         /* Matrix thats store Tasks informations protected by WDT sem */
-INT8U mboxCount = 0;                                  /* Variable for Mbox message propagation         */
+//INT32U WDTcheck[2][15] = {0};                         /* Matrix thats store Tasks informations protected by WDT sem */
+//INT8U mboxCount = 0;                                  /* Variable for Mbox message propagation         */
 
-void          *editMsg[100];                          /* Place for queue pointers (displayQue)         */ 
-void          *CommMsg[100];                          /* Place for queue pointers (Que)                */
+void          *editMsg[10];                          /* Place for queue pointers (displayQue)         */ 
+void          *CommMsg[10];                          /* Place for queue pointers (Que)                */
 
 struct queBuff							              /* Struct using by all tasks to communicate with displayTask  */			  
 {
     int who;                                          /* Who sended message                            */ 
+    //tasks info
     char tasknr;                                      /* Taks Number 1-15                              */
 	INT32U load;                                      /* Actual load dor loop                          */
 	INT32U counter;                                   /* Task actual number of enters                  */
+    INT32U delta;
+    //buffor control
     char buffor[4][BUF_SIZE];                            /* Matrix used by editTask to save cmd buffor    */      
     int line;
-    
+    //Error control
+    int Error;
+    int mboxError[5];
+    int queError; 
 };
 
 
@@ -75,7 +81,7 @@ struct queBuff							              /* Struct using by all tasks to communicate w
         void  QueTask(void *data);                    /* Function prototypes of Queue task             */
         void  BoxTask(void *data);                    /* Function prototypes of Mail box task          */
         void  TaskStart(void *data);                  /* Function prototypes of Startup task           */
-        void  WDTTask(void *data);                    /* Function prototypes of WDT task               */   
+        void  propagationTask(void *data);                    /* Function prototypes of WDT task               */   
 static  void  TaskStartCreateTasks(void);             /* Function prototypes of Start Create tasks     */
 static  void  TaskStartDispInit(void);                /* Function prototypes of Init display           */   
 static  void  TaskStartDisp(void);                    /* Function prototypes of Start display          */
@@ -93,6 +99,7 @@ static  void  TaskStartDisp(void);                    /* Function prototypes of 
 
 void  main (void)
 {
+    INT8U i =0;
     PC_DispClrScr(DISP_FGND_WHITE + DISP_BGND_BLACK);      /* Clear the screen                         */
 
     OSInit();                                              /* Initialize uC/OS-II                      */
@@ -101,12 +108,18 @@ void  main (void)
     PC_VectSet(uCOS, OSCtxSw);                             /* Install uC/OS-II's context switch vector */
 
     // create semaphores, queues and mailbox 
-    edMbox = OSMboxCreate(NULL);
-    displayQue = OSQCreate(&editMsg[0],queSize);  
+    displayMbox = OSMboxCreate(NULL);
+    editQue = OSQCreate(&editMsg[0],queSize);  
+    PropagationMbox = OSMboxCreate(NULL);
+    //initialize Tasks comunication
     Que = OSQCreate(&CommMsg[0],queSize);  
-    Box = OSMboxCreate(NULL);
+    for(i =0; i<5; i++)
+    {
+        Box[i] = OSMboxCreate(NULL);
+    }
+    
     Sem = OSSemCreate(1);    
-    WDTsem = OSSemCreate(1);    
+   // WDTsem = OSSemCreate(1);    
 
     // start parents task 
     OSTaskCreate(TaskStart, (void *)0, &TaskStartStk[TASK_STK_SIZE - 1], 0);
@@ -172,7 +185,7 @@ static  void  TaskStartDispInit (void)
     PC_DispStr( 0,  3, "                                                                                ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
     PC_DispStr( 0,  4, "                                                                                ", DISP_FGND_BLACK + DISP_BGND_BLUE);
     PC_DispStr( 0,  5, "                                 WDT Alarm                                      ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
-    PC_DispStr( 0,  6, "NR  Type Load               Delta/Sek    Counter                Val     State   ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);    
+    PC_DispStr( 0,  6, "NR  Type Load               Delta/Sek    Counter           ERR          State   ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);    
     PC_DispStr( 0,  7, "01     Q                                                                        ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
     PC_DispStr( 0,  8, "02     Q                                                                        ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
     PC_DispStr( 0,  9, "03     Q                                                                        ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
@@ -257,7 +270,7 @@ static  void  TaskStartCreateTasks (void)
 	OSTaskCreate(keyboardTask, 0, &TaskStk[0][TASK_STK_SIZE - 1], 1);       // Read from keyboard
 	OSTaskCreate(editTask, 0, &TaskStk[1][TASK_STK_SIZE - 1], 2);           // Edits buffor
 	OSTaskCreate(displayTask, 0, &TaskStk[2][TASK_STK_SIZE - 1], 3);        // Display on screen
-    OSTaskCreate(WDTTask,0,&WDTTaskStk[TASK_STK_SIZE-1],4);                 // WDT task 
+    OSTaskCreate(propagationTask,0,&propagationTaskStk[TASK_STK_SIZE-1],4);                 // Propagate task 
 
     for(i=3; i<8; i++)
     {
@@ -273,9 +286,74 @@ static  void  TaskStartCreateTasks (void)
 *********************************************************************************************************
 */
 
+void propagationTask(void *pdata)
+{
+    INT8U err;
+    struct queBuff dis[1];
+    INT8U mboxErr[5] = {OS_NO_ERR};
+    INT8U queErr = OS_NO_ERR;
+    INT8U i=0;
+    INT32U loadVal = 0;
+
+    // initialize data
+    dis->who = 3;
+    dis->Error = 0;
+    dis->queError = 0;
+    for(i=0; i<5; i++)
+    {
+        dis->mboxError[i] = 0;
+    }
+
+    for(;;)
+    {
+        loadVal = *(INT32U*)OSMboxPend(PropagationMbox,0,&err);
+
+        OSSemPend(Sem,0,&err);
+        semVal = loadVal;
+        OSSemPost(Sem);
+
+        //  insert into Que
+        for (i = 0; i<5; i++)	
+		{
+		    queErr = OSQPost(Que,&loadVal);
+		}
+
+        //insert into mailBox
+        for(i=0; i<5; i++)
+        {
+           mboxErr[i] = OSMboxPost(Box[i], &loadVal);
+        }
+        
+        for(i = 0; i<5; i++)
+        {
+            if(mboxErr[i] == OS_MBOX_FULL)
+            {
+                dis->mboxError[i] = 1;
+                dis->Error = 1;
+            }
+        }
+
+        if(queErr == OS_Q_FULL)//OS_NO_ERR)
+        {
+            dis->queError = 1;
+            dis->Error = 1;
+        }
+
+        if(dis->Error == 1)
+        {
+            OSMboxPost(displayMbox,dis);
+            dis->Error = 0;
+        }
+        
+    }
+
+}
+
+
 /**
  * @brief   Task overwatchs whether system is overload, checking if task got proper load value and calculate delta/sek
  */
+ /*
 void WDTTask(void *pdata)
 {
     INT32U WDTcheckInside[2][15] = {0};                // WDT compare matrix 
@@ -287,7 +365,7 @@ void WDTTask(void *pdata)
     char clear[64] = "      \0";                       // clear string
 
 
-    OSTimeDlyHMSM(0, 0, 1, 0);                         /* Wait five second                          */
+    OSTimeDlyHMSM(0, 0, 1, 0);                         /* Wait five second                          
     OSSemPend(WDTsem,0,0);                             // Pend WDT sem to read values from global variables 
     for(i = 0; i<15; i++)                              // initialize WDT task 
     {                                   
@@ -298,7 +376,7 @@ void WDTTask(void *pdata)
     PC_DispStr(46,5,"--OK--",DISP_FGND_BLACK + DISP_BGND_GREEN);            // Display WDT info aboyt alarm 
     for(;;)
     { 
-        OSTimeDlyHMSM(0, 0, 1, 0);                         /* Wait one second                          */
+        OSTimeDlyHMSM(0, 0, 1, 0);                         /* Wait one second                          
         OSSemPend(WDTsem,0,0);                             // Pend WDT sem to read values from global variables 
         for(i = 0; i<15; i++)
         {
@@ -363,6 +441,7 @@ void WDTTask(void *pdata)
     }
 }
 
+*/
 /**
  * @brief   Queue task used for overload system load is provided via queue Que.
  */
@@ -372,6 +451,9 @@ void  QueTask(void *pdata)
     INT32U *queMessPtr = 0;                                  // Pointer to collect message from Que 
     INT32U i = 0;                                            // interator
     INT8U  err;                                              // error var
+    INT32U snapCounter = 0;
+    INT32U internalTime = 0;
+   // INT32U delta = 0;
     struct queBuff dis[1];                                   // Struct to store all needed data 
 
     // initialize struct 
@@ -379,9 +461,16 @@ void  QueTask(void *pdata)
     dis->counter = 0; 
     dis->load = 10;
     dis->who = 2;
+    dis->delta = 200;
    
-    
+    internalTime = OSTimeGet();
     for (;;) {
+        if(OSTimeGet() - internalTime >= 200)
+        {
+            internalTime = OSTimeGet();
+            dis->delta = dis->counter - snapCounter ;
+            snapCounter = dis->counter;
+        }
         // Counter store informations about loop enter  from begining of program.
         dis->counter++;
         // Display information about work 
@@ -411,13 +500,8 @@ void  QueTask(void *pdata)
             doSomething = 1;
         }
 
-        // Report to WDT
-        OSSemAccept(WDTsem);
-        WDTcheck[0][(INT8U)(dis->tasknr)-6] = dis->counter;
-        WDTcheck[1][(INT8U)(dis->tasknr)-6] = dis->load;
-        OSSemPost(WDTsem);
         // Send info to display
-        OSMboxPost(edMbox,dis);
+        OSMboxPost(displayMbox,dis);
         PC_DispStr(72,dis->tasknr+1,"DONE",DISP_FGND_BLACK + DISP_BGND_GREEN);
         OSTimeDly(1);                                                    
     }
@@ -432,6 +516,8 @@ void  BoxTask (void *pdata)
     INT8U doSomething = 0;                                   // inside load loop varaible
     INT32U *boxMessPtr = 0;                                  // Pointer to collect message from MBox
     INT32U i = 0;                                            // Iterator
+    INT32U snapCounter = 0;
+    INT32U internalTime = 0;
     INT8U  err;                                              // Error varaible 
     struct queBuff dis[1];                                   // Struct to store all needed data      
 
@@ -440,37 +526,34 @@ void  BoxTask (void *pdata)
     dis->counter = 0; 
     dis->load = 10;
     dis->who = 2;
+    dis->delta = 200;
 
-    // Everything as in Que task above.
+    internalTime = OSTimeGet();
     for (;;) { 
+        if(OSTimeGet() - internalTime >= 200)
+        {
+            internalTime = OSTimeGet();
+            dis->delta = dis->counter - snapCounter ;
+            snapCounter = dis->counter;
+        }
+
         dis->counter++;
         PC_DispStr(72,dis->tasknr+1,"WORK",DISP_FGND_BLACK + DISP_BGND_RED);
         OS_ENTER_CRITICAL();
-        boxMessPtr =  (INT32U *)OSMboxAccept(Box);
-       
-        if(boxMessPtr && (mboxCount > 0))
-        {         
-            if(*boxMessPtr == dis->load)
-            {
-                OSMboxPost(Box,boxMessPtr); 
-            }
-            else
-            {
-                mboxCount--;
-                OSMboxPost(Box,boxMessPtr); 
-            }                                                        
-            dis->load = *boxMessPtr;                                                                                      
-        }
+        boxMessPtr =  (INT32U *)OSMboxAccept(Box[dis->tasknr-11]);
+
+        if(boxMessPtr != NULL)
+        {
+             dis->load = *boxMessPtr;  
+        }                                   
+                                                                                               
+
         OS_EXIT_CRITICAL();
         for(i = 0; i < dis->load; i++)
         { 
             doSomething = 1;
         }
-        OSSemAccept(WDTsem);
-        WDTcheck[0][(INT8U)(dis->tasknr)-6] = dis->counter;
-        WDTcheck[1][(INT8U)(dis->tasknr)-6] = dis->load;
-        OSSemPost(WDTsem);
-        OSMboxPost(edMbox,dis);
+        OSMboxPost(displayMbox,dis);
         PC_DispStr(72,dis->tasknr+1,"DONE",DISP_FGND_BLACK + DISP_BGND_GREEN);
         OSTimeDly(1);                                                    
     }
@@ -484,6 +567,8 @@ void  SemTask (void *pdata)
 {
     INT8U doSomething = 0;                          // As above 
     INT32U i = 0;
+    INT32U snapCounter = 0;
+    INT32U internalTime = 0;
     INT8U  err;
     struct queBuff dis[1];
 
@@ -492,9 +577,16 @@ void  SemTask (void *pdata)
     dis->counter = 0; 
     dis->load = 10;
     dis->who = 2;
+    dis->delta = 200;
 
-
+    internalTime = OSTimeGet();
     for (;;) {
+        if(OSTimeGet() - internalTime >= 200)
+        {
+            internalTime = OSTimeGet();
+            dis->delta = dis->counter - snapCounter ;
+            snapCounter = dis->counter;
+        }
         
         dis->counter++;
         PC_DispStr(72,dis->tasknr+1,"WORK",DISP_FGND_BLACK + DISP_BGND_RED);
@@ -509,12 +601,8 @@ void  SemTask (void *pdata)
         { 
             doSomething = 1;
         }
-        OSSemAccept(WDTsem);
-        WDTcheck[0][(INT8U)(dis->tasknr)-6] = dis->counter;
-        WDTcheck[1][(INT8U)(dis->tasknr)-6] = dis->load;
-        OSSemPost(WDTsem);
 
-        OSMboxPost(edMbox,dis);
+        OSMboxPost(displayMbox,dis);
         PC_DispStr(72,dis->tasknr+1,"DONE",DISP_FGND_BLACK + DISP_BGND_GREEN);
         OSTimeDly(1);                                                    
     }
@@ -533,7 +621,7 @@ void keyboardTask(void *pdata)
 	{
 		if(PC_GetKey(&Key) == TRUE)                         // Looking if key is pressed 
         {			
-			OSQPost(displayQue,&Key);                       // Pass varaible to displaTask via Queue displayQue
+			OSQPost(editQue,&Key);                       // Pass varaible to displaTask via Queue displayQue
 		}
 		OSTimeDly(6);										// Delay og 6 ticks because keyboard wont work faster 
 	}
@@ -571,31 +659,16 @@ void editTask(void *pdata)
 	
 	for(;;)
 	{ 
-		Klaw = (INT16S *)OSQPend(displayQue,0,&err);
+		Klaw = (INT16S *)OSQPend(editQue,0,&err);
 		down = (char)*Klaw;
-   //PC_DispChar(10,0,displayBuffor->line+48,DISP_FGND_BLACK+DISP_BGND_LIGHT_GRAY);
-      //  PC_DispChar(15,0,BufforPozycja+48,DISP_FGND_BLACK+DISP_BGND_LIGHT_GRAY);
+        //  PC_DispChar(10,0,displayBuffor->line+48,DISP_FGND_BLACK+DISP_BGND_LIGHT_GRAY);
+        //  PC_DispChar(15,0,BufforPozycja+48,DISP_FGND_BLACK+DISP_BGND_LIGHT_GRAY);
 
 		switch(down)
 		{
 			case 0x0D:			//enter  
                 ValBuff = strtoul( displayBuffor->buffor[displayBuffor->line],NULL,10);
-                // insert into global variable
-                OSSemPend(Sem,0,&err);
-                semVal = ValBuff;
-                OSSemPost(Sem);
-                //clear up the que 
-                while(OSQAccept(Que));
-                //  insert into Que
-                for (i = 0; i<5; i++)	
-			    {
-				    OSQPost(Que,&ValBuff);
-			    }
-                //clear up the mailbox 
-                OSMboxAccept(Box);
-                //insert into mailBox
-                mboxCount = 5;
-                OSMboxPost(Box, &ValBuff);
+                OSMboxPost(PropagationMbox,&ValBuff);
                 displayBuffor->line++;
                 if(displayBuffor->line == 4) 
                 {
@@ -641,7 +714,7 @@ void editTask(void *pdata)
 			break;
 		}	
         // Send data to displayTask
-		OSMboxPost(edMbox,displayBuffor);
+		OSMboxPost(displayMbox,displayBuffor);
         
 	}
 }
@@ -654,29 +727,50 @@ void displayTask(void *pdata)
 {
 	struct queBuff *procesStruct = 0;                   // Pointer to displayMbox variable
     INT8U err;                                          // Error variable
+    INT8U i =0;
     char strBufforLo[10] = {0};                         // Load buffor string for ultoa()
     char strBufforCn[10] = {0};                         // Counter buffor string for ultoa()
+    char strBufforDe[10] = {0};                         // delta buffor string for ultoa()
     char clear[64] = "              \0";                // Clear up string
 	pdata = pdata;                                      // Prevent warnings
 							
 	for(;;)
 	{
-		procesStruct = (struct queBuff*)OSMboxPend(edMbox, 0,&err);                         // Collect data from Mail Box
+		procesStruct = (struct queBuff*)OSMboxPend(displayMbox, 0,&err);                         // Collect data from Mail Box
         if(procesStruct->who == 1)                                                          // editTask sended a message
         {
             PC_DispStr(0,procesStruct->line,clear, DISP_FGND_BLACK+DISP_BGND_LIGHT_GRAY);
-	        PC_DispStr(0,procesStruct->line,procesStruct->buffor[procesStruct->line], DISP_FGND_BLACK+DISP_BGND_LIGHT_GRAY);  
-           // PC_DispStr(0,procesStruct->line,procesStruct->buffor[1], DISP_FGND_BLACK+DISP_BGND_LIGHT_GRAY);  
-           // PC_DispStr(0,procesStruct->line,procesStruct->buffor[2], DISP_FGND_BLACK+DISP_BGND_LIGHT_GRAY);  
-           // PC_DispStr(0,procesStruct->line,procesStruct->buffor[3], DISP_FGND_BLACK+DISP_BGND_LIGHT_GRAY);     // display actual load value 	
+	        PC_DispStr(0,procesStruct->line,procesStruct->buffor[procesStruct->line], DISP_FGND_BLACK+DISP_BGND_LIGHT_GRAY);    // display actual load value 	
         }
         else if(procesStruct->who == 2)                                                     // Que,Sem or Box task sended a message
         {
             ultoa(procesStruct->counter,strBufforCn, 10 );                                              // Convert load from task into string  
-            ultoa(procesStruct->load,strBufforLo, 10 );                                                 // Convert count from task into string
+            ultoa(procesStruct->load,strBufforLo, 10 );   
+            ultoa(procesStruct->delta,strBufforDe, 10 );                                               // Convert count from task into string
             PC_DispStr(9,procesStruct->tasknr+1,clear,DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);          // Clear load
             PC_DispStr(9,procesStruct->tasknr+1,strBufforLo,DISP_FGND_BLACK+DISP_BGND_LIGHT_GRAY);      // Display load
+            PC_DispStr(30,procesStruct->tasknr+1,clear,DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);                 // Cleat 
+            PC_DispStr(30,procesStruct->tasknr+1,strBufforDe,DISP_FGND_BLACK+DISP_BGND_LIGHT_GRAY);          // Display Delta/sek for each task
             PC_DispStr(41,procesStruct->tasknr+1,strBufforCn,DISP_FGND_BLACK+DISP_BGND_LIGHT_GRAY);     // Display count
+        }
+        else if(procesStruct->who == 3)
+        {
+            for(i =0; i<5; i++ )
+            {
+                if(procesStruct->mboxError[i] == 1)
+                {
+                    PC_DispStr(49,i+12,(char*)"MBOX FULL ERR", DISP_FGND_BLACK+DISP_BGND_LIGHT_GRAY);
+                }        
+            }
+
+            if(procesStruct->queError == 1)
+            {
+                for(i =0; i<5; i++ )
+                {
+                    PC_DispStr(49,i+7,(char*)"QUE FULL ERR", DISP_FGND_BLACK+DISP_BGND_LIGHT_GRAY);
+                }
+            }
+            
         }
         else
         {
