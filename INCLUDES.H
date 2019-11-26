@@ -16,6 +16,7 @@
 #include    <stdlib.h>
 #include    <conio.h>
 #include    <dos.h>
+//#include    <os.h>
 #include    <setjmp.h>
 
 #include    "\software\ucos-ii\ix86l\bc45\os_cpu.h"

@@ -37,13 +37,21 @@ OS_STK        TaskStartStk[TASK_STK_SIZE];            /* Start task stack       
 OS_STK        propagationTaskStk[TASK_STK_SIZE];              /* WDT task stack                                */
 
 
+
+OS_MEM        *CommMem;
 OS_EVENT      *editQue;                            /* Pointer to display Queue                      */
 OS_EVENT      *Sem;                                   /* Pointer to Semaphore using by SemTasks        */
 OS_EVENT      *Que;                                   /* Pointer to Queue using  by QueTasks           */
 OS_EVENT      *Box[5];                                   /* Pointer to Mbox using by BoxTasks             */
 OS_EVENT      *displayMbox;                                /* Pointer to Mbox using by keyboard/edit tasks  */
 OS_EVENT      *PropagationMbox;                                /* Pointer to Propagation Mbox */
+typedef struct  
+{
+    INT32U load;
+    INT8U taskNr;
+} memStruct;
 
+memStruct  CommBuf[25];                              // memBlock buff
 
 INT32U semVal = 10;                                   /* Variablec protected by Sem semaphore          */
 char taskNumbers[5] = {0};                            /* Variables thats are pass to tasks on create   */
@@ -100,6 +108,7 @@ static  void  TaskStartDisp(void);                    /* Function prototypes of 
 void  main (void)
 {
     INT8U i =0;
+    INT8U memErr = 0 ;
     PC_DispClrScr(DISP_FGND_WHITE + DISP_BGND_BLACK);      /* Clear the screen                         */
 
     OSInit();                                              /* Initialize uC/OS-II                      */
@@ -107,6 +116,8 @@ void  main (void)
     PC_DOSSaveReturn();                                    /* Save environment to return to DOS        */
     PC_VectSet(uCOS, OSCtxSw);                             /* Install uC/OS-II's context switch vector */
 
+    //Initialize memBlock
+    CommMem = OSMemCreate(CommBuf,25,sizeof(memStruct),&memErr);
     // create semaphores, queues and mailbox 
     displayMbox = OSMboxCreate(NULL);
     editQue = OSQCreate(&editMsg[0],queSize);  
@@ -289,6 +300,7 @@ static  void  TaskStartCreateTasks (void)
 void propagationTask(void *pdata)
 {
     INT8U err;
+    memStruct *loadMem;
     struct queBuff dis[1];
     INT8U mboxErr[5] = {OS_NO_ERR};
     INT8U queErr = OS_NO_ERR;
@@ -319,13 +331,20 @@ void propagationTask(void *pdata)
         //  insert into Que
         for (i = 0; i<5; i++)	
 		{
-		    queErr = OSQPost(Que,&loadVal);
+
+            loadMem = (memStruct *)OSMemGet(CommMem,&err);
+            loadMem->load = loadVal; 
+            loadMem->taskNr = i;
+		    queErr = OSQPost(Que,loadMem);
 		}
 
         //insert into mailBox
         for(i=0; i<5; i++)
         {
-           mboxErr[i] = OSMboxPost(Box[i], &loadVal);
+            loadMem = (memStruct *)OSMemGet(CommMem,&err);
+            loadMem->load = loadVal; 
+            loadMem->taskNr = i;
+            mboxErr[i] = OSMboxPost(Box[i], loadMem);
         }
         
         for(i = 0; i<5; i++)
@@ -483,9 +502,11 @@ void WDTTask(void *pdata)
 void  QueTask(void *pdata)
 {
     INT8U doSomething = 0;                                   // inside load loop varaible
-    INT32U *queMessPtr = 0;                                  // Pointer to collect message from Que 
+    memStruct *queMessPtr = 0;                                  // Pointer to collect message from Que 
     INT32U i = 0;                                            // interator
     INT8U  err;                                              // error var
+    INT8U in=0;
+    OS_Q_DATA QueueData;
     INT32U snapCounter = 0;
     INT32U internalTime = 0;
    // INT32U delta = 0;
@@ -500,6 +521,7 @@ void  QueTask(void *pdata)
    
     internalTime = OSTimeGet();
     for (;;) {
+        OSQQuery(Que, &QueueData);
         if(OSTimeGet() - internalTime >= 200)
         {
             internalTime = OSTimeGet();
@@ -511,23 +533,33 @@ void  QueTask(void *pdata)
         // Display information about work 
         PC_DispStr(72,dis->tasknr+1,"WORK",DISP_FGND_BLACK + DISP_BGND_RED);
         // Enter critical to avoid program crash
-        OS_ENTER_CRITICAL();
+      //  OS_ENTER_CRITICAL();
         // Read from Que
-        queMessPtr =  (INT32U *)OSQAccept(Que);
-        if(queMessPtr)
-        {   
-            // if load is alredy set to current load dont read from que, let low priority task read load var         
-            if(*queMessPtr == dis->load)
-            {
-                OSQPost(Que, queMessPtr);
+        for(i = 0; i < QueueData.OSNMsgs; i++) 
+        {
+            queMessPtr =  (memStruct *)OSQAccept(Que);
+            if(queMessPtr != 0)
+            {   
+                // if load is alredy set to current load dont read from que, let low priority task read load var         
+                if((int)dis->tasknr == queMessPtr->taskNr+6 && in != 1) //dis->load != queMessPtr->load && in != 1)  //
+                {
+                    dis->load = queMessPtr->load;
+                    err = OSMemPut(CommMem,queMessPtr);
+                    in++;
+                   // break;1111111
+                }
+                else
+                {
+                    OSQPost(Que, queMessPtr);
+                }                                 
+                                                                                                
             }
-            else
-            {
-                dis->load = *queMessPtr;
-            }                                 
-                                                                                               
         }
-        OS_EXIT_CRITICAL();
+        in = 0 ;
+       // OS_EXIT_CRITICAL();
+
+        // Send info to display
+        OSMboxPost(displayMbox,dis);
 
         // Load loop 
         for(i = 0; i < dis->load; i++)
@@ -535,8 +567,7 @@ void  QueTask(void *pdata)
             doSomething = 1;
         }
 
-        // Send info to display
-        OSMboxPost(displayMbox,dis);
+        
         PC_DispStr(72,dis->tasknr+1,"DONE",DISP_FGND_BLACK + DISP_BGND_GREEN);
         OSTimeDly(1);                                                    
     }
@@ -549,7 +580,7 @@ void  QueTask(void *pdata)
 void  BoxTask (void *pdata)
 {
     INT8U doSomething = 0;                                   // inside load loop varaible
-    INT32U *boxMessPtr = 0;                                  // Pointer to collect message from MBox
+    memStruct *boxMessPtr = 0;                                  // Pointer to collect message from MBox
     INT32U i = 0;                                            // Iterator
     INT32U snapCounter = 0;
     INT32U internalTime = 0;
@@ -574,21 +605,22 @@ void  BoxTask (void *pdata)
 
         dis->counter++;
         PC_DispStr(72,dis->tasknr+1,"WORK",DISP_FGND_BLACK + DISP_BGND_RED);
-        OS_ENTER_CRITICAL();
-        boxMessPtr =  (INT32U *)OSMboxAccept(Box[dis->tasknr-11]);
+       // OS_ENTER_CRITICAL();
+        boxMessPtr =  (memStruct *)OSMboxAccept(Box[dis->tasknr-11]);
 
         if(boxMessPtr != NULL)
         {
-             dis->load = *boxMessPtr;  
+             dis->load = boxMessPtr->load;  
+             err = OSMemPut(CommMem,boxMessPtr);
         }                                   
-                                                                                               
+        OSMboxPost(displayMbox,dis);                                                                                       
 
-        OS_EXIT_CRITICAL();
+       // OS_EXIT_CRITICAL();
         for(i = 0; i < dis->load; i++)
         { 
             doSomething = 1;
         }
-        OSMboxPost(displayMbox,dis);
+       
         PC_DispStr(72,dis->tasknr+1,"DONE",DISP_FGND_BLACK + DISP_BGND_GREEN);
         OSTimeDly(1);                                                    
     }
