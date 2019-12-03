@@ -55,8 +55,6 @@ memStruct  CommBuf[25];                              // memBlock buff
 
 INT32U semVal = 10;                                   /* Variablec protected by Sem semaphore          */
 char taskNumbers[5] = {0};                            /* Variables thats are pass to tasks on create   */
-//INT32U WDTcheck[2][15] = {0};                         /* Matrix thats store Tasks informations protected by WDT sem */
-//INT8U mboxCount = 0;                                  /* Variable for Mbox message propagation         */
 
 void          *editMsg[10];                          /* Place for queue pointers (displayQue)         */ 
 void          *CommMsg[10];                          /* Place for queue pointers (Que)                */
@@ -297,6 +295,9 @@ static  void  TaskStartCreateTasks (void)
 *********************************************************************************************************
 */
 
+/**
+ * @brief   propagation task used to catch errors and send load to each type of task(Sem,Que,Box).
+ */
 void propagationTask(void *pdata)
 {
     INT8U err;
@@ -331,7 +332,7 @@ void propagationTask(void *pdata)
         //  insert into Que
         for (i = 0; i<5; i++)	
 		{
-
+            //Get dynamic memory for new load pointer
             loadMem = (memStruct *)OSMemGet(CommMem,&err);
             loadMem->load = loadVal; 
             loadMem->taskNr = i;
@@ -341,6 +342,7 @@ void propagationTask(void *pdata)
         //insert into mailBox
         for(i=0; i<5; i++)
         {
+            //Get dynamic memory for new load pointer
             loadMem = (memStruct *)OSMemGet(CommMem,&err);
             loadMem->load = loadVal; 
             loadMem->taskNr = i;
@@ -403,99 +405,6 @@ void propagationTask(void *pdata)
 
 }
 
-
-/**
- * @brief   Task overwatchs whether system is overload, checking if task got proper load value and calculate delta/sek
- */
- /*
-void WDTTask(void *pdata)
-{
-    INT32U WDTcheckInside[2][15] = {0};                // WDT compare matrix 
-    INT8U i;                                           // iterator 
-    INT32U repairVal = 10;                             // When task detect overload set this value as new load
-    INT8U WDTReset = 0;                                // Variable that indicates if alarm occured 
-    char strBufforDelta[33] = {0};                     // Matrix to store delta/sek on display
-    INT32U deltaCount[15] = {0};                       // Matrix to store delta/sek for each task 
-    char clear[64] = "      \0";                       // clear string
-
-
-    OSTimeDlyHMSM(0, 0, 1, 0);                         /* Wait five second                          
-    OSSemPend(WDTsem,0,0);                             // Pend WDT sem to read values from global variables 
-    for(i = 0; i<15; i++)                              // initialize WDT task 
-    {                                   
-        WDTcheckInside[0][i] = WDTcheck[0][i];         
-        WDTcheckInside[1][i] = WDTcheck[1][i];       
-    }
-    OSSemPost(WDTsem);
-    PC_DispStr(46,5,"--OK--",DISP_FGND_BLACK + DISP_BGND_GREEN);            // Display WDT info aboyt alarm 
-    for(;;)
-    { 
-        OSTimeDlyHMSM(0, 0, 1, 0);                         /* Wait one second                          
-        OSSemPend(WDTsem,0,0);                             // Pend WDT sem to read values from global variables 
-        for(i = 0; i<15; i++)
-        {
-            deltaCount[i] = WDTcheck[0][i] - WDTcheckInside[0][i];                           // Calculate delta count 
-            WDTcheckInside[0][i]  = WDTcheck[0][i];                                          // Save previously value 
-            ultoa(deltaCount[i],strBufforDelta, 10 );                                        // uLong to char array 
-            PC_DispStr(30,i+7,clear,DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);                 // Cleat 
-            PC_DispStr(30,i+7,strBufforDelta,DISP_FGND_BLACK+DISP_BGND_LIGHT_GRAY);          // Display Delta/sek for each task 
-        }
-        
-
-        for(i = 0; i<15; i++)                              // Looking if load was proper delivered to tasks 
-        {
-            OSSemPend(Sem,0,0);                            // Obtain semaphore to read global load value
-            if(semVal == WDTcheck[1][i])                   // check if global varaible is equal to task inside load 
-            {
-                PC_DispStr(65 ,i+7,"OK",DISP_FGND_BLACK + DISP_BGND_GREEN);
-            }
-            else
-            {
-                PC_DispStr(65 ,i+7,"NO",DISP_FGND_BLACK + DISP_BGND_RED);
-            }
-            OSSemPost(Sem);
-        }
-        OSSemPost(WDTsem);
-
-        if(deltaCount[2] == 0)                             // Loking for oveload, when 3 rd task is not responding reset system 
-        {
-            WDTReset++;
-            PC_DispStr(46,5,"ALERT!",DISP_FGND_BLACK + DISP_BGND_RED);
-        }
-        else
-        {
-            WDTReset = 0;
-            PC_DispStr(46,5,"--OK--",DISP_FGND_BLACK + DISP_BGND_GREEN);
-        }
-        if(WDTReset == 5)                                 // if 3rd task didnt respond 5 times (5 sek) enable reset procedure 
-        {   
-            // Insert value into global Sempahore tasks
-            OSSemPend(Sem,0,0);
-            semVal = 10;
-            OSSemPost(Sem);
-
-            // Clear up the que 
-            while(OSQAccept(Que));
-
-            // Insert into Que
-            for (i = 0; i<5; i++)	
-			{
-				OSQPost(Que,&repairVal);
-			}
-
-            //clear up the mailbox 
-            OSMboxAccept(Box);
-            //insert into mailBox
-            mboxCount = 5;
-            OSMboxPost(Box, &repairVal);
-            //reset WDT counter      
-            WDTReset = 0;
-            PC_DispStr(46,5,"--OK--",DISP_FGND_BLACK + DISP_BGND_GREEN);
-        }
-    }
-}
-
-*/
 /**
  * @brief   Queue task used for overload system load is provided via queue Que.
  */
@@ -532,8 +441,6 @@ void  QueTask(void *pdata)
         dis->counter++;
         // Display information about work 
         PC_DispStr(72,dis->tasknr+1,"WORK",DISP_FGND_BLACK + DISP_BGND_RED);
-        // Enter critical to avoid program crash
-      //  OS_ENTER_CRITICAL();
         // Read from Que
         for(i = 0; i < QueueData.OSNMsgs; i++) 
         {
@@ -556,7 +463,6 @@ void  QueTask(void *pdata)
             }
         }
         in = 0 ;
-       // OS_EXIT_CRITICAL();
 
         // Send info to display
         OSMboxPost(displayMbox,dis);
