@@ -16,6 +16,7 @@
 #include <linux/module.h>
 #include <linux/fs.h>
 #include <linux/miscdevice.h>
+#include <linux/slab.h>
 #include <linux/sched.h>
 #include <linux/uaccess.h>
 
@@ -30,29 +31,39 @@ static struct mutex ringdev_lock;
 static char ringdev_buf[4096];
 static size_t ringdev_len;
 static int writePtr;
-static int readPtr;
+//static int *readPtr;
 static DECLARE_WAIT_QUEUE_HEAD( headQue );
 static _Bool flag = 0;
-static int bufforFull =0, in_flag =0;
+static int bufforFull =0;//, in_flag =0;
 
 static int ringdev_open(struct inode *inode, struct file *filp)
 {
-//	printk( KERN_INFO "Hello , world 4!\n" );
+//	printk( KERN_INFO "open \n" );
+	int*  zm;
+	zm = kmalloc(sizeof(int),GFP_KERNEL);
+	*zm = 0;
+	filp->private_data = zm;
+	//filp->private_data = (int)0;
+	
 	return 0;
 }
 
 static ssize_t ringdev_read(struct file *filp, char __user *buf, size_t count,loff_t* off)
 { 
+	ssize_t ret = 0;
+	int *readPtr;
 
 	mutex_lock(&ringdev_lock);
-
+	readPtr = (int*)filp->private_data;
+	pr_info("readPtr: %d", (*readPtr));
+	pr_info("info");
 check_again:
 //	pr_info("\n readPtr: %zd, writePtr %zd \n",readPtr, writePtr );
- 	if(writePtr < readPtr)
+ 	if(writePtr < *readPtr)
 	{
 		if(bufforFull == 1)
 		{
-			count = ringdev_len - readPtr;
+			count = ringdev_len - *readPtr;
 			//readPtr = 0;
 		}
 		else
@@ -60,18 +71,18 @@ check_again:
 	}
 //	pr_info("count: %zd \n ", count);
 
-	ssize_t ret = 0;
+//	ssize_t ret = 0;
 
 	//mutex_lock(&ringdev_lock);
 
-	if (readPtr >= ringdev_len)
+	if (*readPtr >= ringdev_len)
 	{
 		count = 0;
 	}
-	else if (writePtr  >=  readPtr)
+	else if (writePtr  >=  *readPtr)
 	{
 
-		count = writePtr - readPtr;
+		count = writePtr - *readPtr;
 	}
 
 			if(count == 0)
@@ -92,16 +103,16 @@ check_again:
 
 	ret = -EFAULT;
 //	pr_info("read_Ptr = %d, count: %zd\n", readPtr, count);
-	if (copy_to_user(buf,&ringdev_buf[readPtr], count))
+	if (copy_to_user(buf,&ringdev_buf[*readPtr], count))
 	{
 		goto out_unlock;
 	}
 
 	ret = count;
-	readPtr += count;
-	if(readPtr >= ringdev_len)
+	*readPtr += count;
+	if(*readPtr >= ringdev_len)
 	{
-		readPtr = 0;
+		*readPtr = 0;
 //                return -EFAULT;
 	}
 out_unlock:
@@ -116,7 +127,7 @@ static ssize_t ringdev_write(struct file *filp, const char __user *buf,
 	ssize_t ret = 0;
 	mutex_lock(&ringdev_lock);
 	pr_info("/n");
-	pr_info(" START: writePtr: %d readPtr: %d", writePtr,readPtr);
+	//pr_info(" START: writePtr: %d readPtr: %d", writePtr,readPtr);
 	//przepełnienie 
 	pr_info("przed 1 if");
 	if(writePtr + count  >= ringdev_len - 1)
@@ -138,7 +149,7 @@ static ssize_t ringdev_write(struct file *filp, const char __user *buf,
 //		in_flag = 1;
 //	}
 	pr_info("przed copy");
-	pr_info("PRZED COPY:  writePtr: %d readPtr: %d", writePtr, readPtr);
+	//pr_info("PRZED COPY:  writePtr: %d readPtr: %d", writePtr, readPtr);
 	if(copy_from_user(&ringdev_buf[writePtr], buf , count))
 	{
 		pr_info("w bledzzie copy_from_user");
@@ -150,7 +161,7 @@ static ssize_t ringdev_write(struct file *filp, const char __user *buf,
 //	*off +=  ret;
 	writePtr += count;
 	pr_info("przed wyzerowaniem");
-	pr_info("PRZED WTZEROWANIEM: writePtr: %d readPtr: %d",writePtr, readPtr);
+	//pr_info("PRZED WTZEROWANIEM: writePtr: %d readPtr: %d",writePtr, readPtr);
 	if(writePtr >= ringdev_len - 1)
 	{
 		writePtr = 0;
@@ -165,6 +176,7 @@ static ssize_t ringdev_write(struct file *filp, const char __user *buf,
 
 static int ringdev_release(struct inode *inode, struct file *filp)
 {
+	kfree(filp->private_data);
 	return 0;
 }
 
@@ -194,10 +206,10 @@ static int __init ringdev_init(void)
 		pr_err("can't register miscdevice.\n");
 		return ret;
 	}
-	readPtr = 0;
+	//readPtr = 0;
 	writePtr = 0;
 	pr_info("minor %d\n", ringdev_miscdevice.minor);
-	ringdev_len = 10;
+	ringdev_len = 4096;
 	return 0;
 }
 
