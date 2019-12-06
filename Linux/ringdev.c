@@ -33,6 +33,7 @@ static int writePtr;
 static int readPtr;
 static DECLARE_WAIT_QUEUE_HEAD( headQue );
 static _Bool flag = 0;
+static int bufforFull =0, in_flag =0;
 
 static int ringdev_open(struct inode *inode, struct file *filp)
 {
@@ -41,14 +42,27 @@ static int ringdev_open(struct inode *inode, struct file *filp)
 }
 
 static ssize_t ringdev_read(struct file *filp, char __user *buf, size_t count,loff_t* off)
-{
-	if(readPtr > writePtr)
-		return 0;
+{ 
+
+	mutex_lock(&ringdev_lock);
+
+check_again:
+//	pr_info("\n readPtr: %zd, writePtr %zd \n",readPtr, writePtr );
+ 	if(writePtr < readPtr)
+	{
+		if(bufforFull == 1)
+		{
+			count = ringdev_len - readPtr;
+			//readPtr = 0;
+		}
+		else
+			return 0;
+	}
+//	pr_info("count: %zd \n ", count);
 
 	ssize_t ret = 0;
 
-	mutex_lock(&ringdev_lock);
-check_again:
+	//mutex_lock(&ringdev_lock);
 
 	if (readPtr >= ringdev_len)
 	{
@@ -84,8 +98,12 @@ check_again:
 	}
 
 	ret = count;
-	readPtr = writePtr;
-
+	readPtr += count;
+	if(readPtr >= ringdev_len)
+	{
+		readPtr = 0;
+//                return -EFAULT;
+	}
 out_unlock:
 	mutex_unlock(&ringdev_lock);
 //	pr_info("return val: %zd\n",ret);
@@ -97,18 +115,33 @@ static ssize_t ringdev_write(struct file *filp, const char __user *buf,
 {
 	ssize_t ret = 0;
 	mutex_lock(&ringdev_lock);
-	if(*off > ringdev_len)
+	pr_info("/n");
+	pr_info(" START: writePtr: %d readPtr: %d", writePtr,readPtr);
+	//przepełnienie 
+	pr_info("przed 1 if");
+	if(writePtr + count  >= ringdev_len - 1)
 	{
-		count = 0;
+		pr_info("w 1 ifie");
+		count = ringdev_len - writePtr;
+		bufforFull = 1;
+		//count = 0;
 	}
-	else if(count >= ringdev_len - *off)
+//	pr_info("2 if");
+	else if(count >= ringdev_len)
 	{
-		count = ringdev_len - *off;
+		pr_info(" w 2 if");
+		count = ringdev_len;
 	}
-
-
-	if(copy_from_user(&ringdev_buf[writePtr] + *off, buf , count))
+//	else if(writePtr + count > ringdev_len - 1 )
+//	{
+//		count = ringdev_len - writePtr - 1;
+//		in_flag = 1;
+//	}
+	pr_info("przed copy");
+	pr_info("PRZED COPY:  writePtr: %d readPtr: %d", writePtr, readPtr);
+	if(copy_from_user(&ringdev_buf[writePtr], buf , count))
 	{
+		pr_info("w bledzzie copy_from_user");
 		printk(KERN_INFO "copy_from_user not null err\n");
 		mutex_unlock(&ringdev_lock);
 		return -EFAULT;
@@ -116,9 +149,16 @@ static ssize_t ringdev_write(struct file *filp, const char __user *buf,
 	ret = count;
 //	*off +=  ret;
 	writePtr += count;
+	pr_info("przed wyzerowaniem");
+	pr_info("PRZED WTZEROWANIEM: writePtr: %d readPtr: %d",writePtr, readPtr);
+	if(writePtr >= ringdev_len - 1)
+	{
+		writePtr = 0;
+	}
 	flag = 1;
 	wake_up_interruptible(&headQue);
-
+	
+	pr_info("PO obudzeniu: return: %zd", ret);
 	mutex_unlock(&ringdev_lock);
 	return ret; 
 }
@@ -157,7 +197,7 @@ static int __init ringdev_init(void)
 	readPtr = 0;
 	writePtr = 0;
 	pr_info("minor %d\n", ringdev_miscdevice.minor);
-	ringdev_len = 4096;
+	ringdev_len = 10;
 	return 0;
 }
 
