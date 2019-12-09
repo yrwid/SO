@@ -41,7 +41,7 @@ static int ringdev_open(struct inode *inode, struct file *filp)
 //	printk( KERN_INFO "open \n" );
 	int*  zm;
 	zm = kmalloc(sizeof(int),GFP_KERNEL);
-	*zm = 0;
+	*zm = writePtr;
 	filp->private_data = zm;
 	//filp->private_data = (int)0;
 	
@@ -88,7 +88,7 @@ check_again:
 			if(count == 0)
 			{
 				mutex_unlock(&ringdev_lock);
-				ret = wait_event_interruptible( headQue ,flag != 0);
+				ret = wait_event_interruptible( headQue ,writePtr != *readPtr);
   		   	  //	pr_info("\n return val: %zd \n", ret);
  			  //	pr_info("readPtr: %zd \n", readPtr);
   			  //	pr_info("writePtr: %zd \n", writePtr);
